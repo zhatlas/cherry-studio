@@ -1,0 +1,57 @@
+name: Sync Fork
+
+on:
+  schedule:
+    # 北京时间8:00-1:00(次日)运行，对应UTC 0:00-16:00
+    - cron: '*/30 0-16 * * *' # 每 30 分钟运行一次
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # 步骤 1: 检出你的仓库代码
+      - name: Checkout target repo
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 # 必须获取完整历史才能 rebase 和比较
+
+      # 步骤 2: 添加上游仓库并获取更新
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/CherryHQ/cherry-studio.git
+          git fetch upstream
+
+      # 步骤 3: 检查上游是否有新的提交
+      - name: Check for upstream changes
+        id: check_diff # 给这个步骤一个 ID，方便后续引用
+        run: |
+          # 计算上游分支比当前分支多出的提交数量
+          UPSTREAM_CHANGES=$(git rev-list --count HEAD..upstream/main)
+
+          # 将结果设置为步骤的输出变量
+          echo "changes=${UPSTREAM_CHANGES}" >> $GITHUB_OUTPUT
+
+          # 打印日志，方便调试
+          if [ "$UPSTREAM_CHANGES" -gt 0 ]; then
+            echo "Upstream has ${UPSTREAM_CHANGES} new commit(s)."
+          else
+            echo "No new commits on upstream. Sync not required."
+          fi
+
+      # 步骤 4: 如果有更新，则执行 Rebase
+      - name: Rebase local branch onto upstream
+        # 只有在 check_diff 步骤的输出 changes 大于 0 时才运行
+        if: steps.check_diff.outputs.changes > '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git rebase upstream/main
+
+      # 步骤 5: 如果有更新，则强制推送到你的 Fork 仓库
+      - name: Force push changes
+        # 同样，只有在有变化时才运行
+        if: steps.check_diff.outputs.changes > '0'
+        run: |
+          git push origin main --force
